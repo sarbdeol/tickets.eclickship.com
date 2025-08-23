@@ -10,15 +10,18 @@ DB_PATH = Path("tickets.db")
 
 USERS = ["Flora", "Diana", "Vinny", "Sam", "Geetiak", "Dharminder"]
 COMMUNICATION = ["Informed Customer", "Waiting for Customer Response", "On Hold as per Customer"]
-PRIORITY = ["Same Day (Red)", "Same Day (Green)", "Next Day (Light Blue)", "2 Days (Light Grey)"]
-STATUS = ["Not Started", "In Progress", "Blocked", "Completed"]
+
+# ✅ Updated priorities to match spec
+PRIORITY = ["Today", "Today 2", "Tomorrow", "2 days"]
 
 PRIORITY_COLORS = {
-    "Same Day (Red)": "#c00000",
-    "Same Day (Green)": "#00b050",
-    "Next Day (Light Blue)": "#bdd7ee",
-    "2 Days (Light Grey)": "#d9d9d9",
+    "Today": "#ff9999",       # Light Red
+    "Today 2": "#ffff66",     # Yellow
+    "Tomorrow": "#66b3ff",    # Blue
+    "2 days": "#bfbfbf",      # Grey
 }
+STATUS = ["Not Started", "In Progress", "Blocked", "Completed"]
+
 STATUS_COLORS = {
     "Not Started": "#c00000",
     "In Progress": "#ed7d31",
@@ -89,7 +92,7 @@ def load_tickets(where_clause="", params=()):
 
 def color_badge(text: str, color_map: dict) -> str:
     color = color_map.get(text, "#444")
-    fg = "#fff" if color in ["#c00000", "#00b050", "#7030a0", "#ed7d31"] else "#000"
+    fg = "#000"
     return f"""<span style="
         background:{color};
         color:{fg};
@@ -121,6 +124,26 @@ def render_table(df: pd.DataFrame):
     columns = ["ID","Date Entered","Time Entered","Communication","Entered By","Attention Owner",
                "FBA Customer","Instructions/Order ID","Priority","Due Date","Status","Notes"]
     df = df[columns]
+
+    # ✅ Custom CSS for alignment and wrapping
+    st.markdown("""
+    <style>
+    table.dataframe th, table.dataframe td {
+        text-align: center !important;
+        vertical-align: middle !important;
+    }
+    table.dataframe td:nth-child(8) { /* Instructions/Order ID */
+        min-width: 250px;
+        white-space: normal !important;
+        word-wrap: break-word !important;
+    }
+    table.dataframe td:nth-child(12) { /* Notes */
+        white-space: normal !important;
+        word-wrap: break-word !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
     st.write(df.to_html(escape=False, index=False), unsafe_allow_html=True)
 
 def dashboard():
@@ -191,7 +214,7 @@ def add_or_edit():
         now = dt.datetime.now()
         row = {
             "date_entered": date.today().isoformat(),
-            "time_entered": now.strftime("%H:%M:%S"),
+            "time_entered": now.strftime("%I:%M %p"),   # ✅ AM/PM
             "communication": COMMUNICATION[0],
             "entered_by": "Diana",
             "attention_owner": USERS[0],
@@ -226,6 +249,16 @@ def add_or_edit():
         with c8:
             stt = st.selectbox("Status", STATUS, index=STATUS.index(row["status"]) if row["status"] in STATUS else 0)
 
+        # ✅ Auto-set due_date based on priority
+        if pr == "Today":
+            due = date.today()
+        elif pr == "Today 2":
+            due = date.today()
+        elif pr == "Tomorrow":
+            due = date.today() + dt.timedelta(days=1)
+        elif pr == "2 days":
+            due = date.today() + dt.timedelta(days=2)
+
         cust = st.text_input("FBA Customer", value=row["fba_customer"])
         instr = st.text_input("Instructions / Order ID", value=row["instructions_order_id"])
         notes = st.text_area("Notes by Owner/Assignee", value=row["notes"], height=120)
@@ -235,7 +268,7 @@ def add_or_edit():
             if submitted:
                 payload = dict(
                     date_entered=date.today().isoformat(),
-                    time_entered=dt.datetime.now().strftime("%H:%M:%S"),
+                    time_entered=dt.datetime.now().strftime("%I:%M %p"),   # ✅ AM/PM
                     communication=comm,
                     entered_by=ent,
                     attention_owner=own,
