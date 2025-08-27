@@ -1,54 +1,33 @@
-# app.py
+# app.py — Tickets Tracker (Advanced, ready to deploy)
+# ---------------------------------
 import datetime as dt
-from datetime import date
 import sqlite3
 from pathlib import Path
+from html import escape as _esc
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 import pytz
 
 DB_PATH = Path("tickets.db")
 
-# Users & Assignment
+# --- Constants ---
 USERS = ["Sam", "Vinny", "Daiana", "Flora", "Geetika", "Dharminder", "Graciela", "Ashu"]
 COMMUNICATION = ["Informed Customer", "Waiting for Customer Response", "On Hold as per Customer"]
 
-# Priorities
 PRIORITY = ["Today", "Today 2", "Tomorrow", "2 days"]
-PRIORITY_COLORS = {
-    "Today": "#ff9999",       # Light Red
-    "Today 2": "#ffff66",     # Yellow
-    "Tomorrow": "#66b3ff",    # Blue
-    "2 days": "#bfbfbf",      # Grey
-}
+PRIORITY_COLORS = {"Today": "#ff9999", "Today 2": "#ffff66", "Tomorrow": "#66b3ff", "2 days": "#bfbfbf"}
+STATUS = ["Open", "Started", "Completed", "Waiting on Customer", "On Hold", "Gated"]
+STATUS_COLORS = {"Open": "#c00000", "Started": "#ed7d31", "Completed": "#00b050",
+                 "Waiting on Customer": "#f1c232", "On Hold": "#7f7f7f", "Gated": "#7030a0"}
 
-# Status
-STATUS = [
-    "Open (Default)",
-    "Started",
-    "Completed",
-    "Waiting on Customer",
-    "On Hold",
-    "Gated"
-]
-STATUS_COLORS = {
-    "Open (Default)": "#c00000",
-    "Started": "#ed7d31",
-    "Completed": "#00b050",
-    "Waiting on Customer": "#f1c232",
-    "On Hold": "#7f7f7f",
-    "Gated": "#7030a0",
-}
-
-# Timezone
 eastern = pytz.timezone("US/Eastern")
 
 # ---------------- Database ----------------
 def init_db():
     with sqlite3.connect(DB_PATH) as con:
         cur = con.cursor()
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS tickets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date_entered TEXT NOT NULL,
@@ -63,255 +42,352 @@ def init_db():
                 status TEXT,
                 notes TEXT
             )
-        """)
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS deleted_tickets (
+                id INTEGER PRIMARY KEY,
+                date_entered TEXT NOT NULL,
+                time_entered TEXT NOT NULL,
+                communication TEXT,
+                entered_by TEXT,
+                assigned_to TEXT,
+                fba_customer TEXT,
+                instructions_order_id TEXT,
+                priority TEXT,
+                due_date TEXT,
+                status TEXT,
+                notes TEXT
+            )
+            """
+        )
         con.commit()
 
-def insert_ticket(row: dict) -> int:
+
+def insert_ticket(row: dict):
     with sqlite3.connect(DB_PATH) as con:
         cur = con.cursor()
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO tickets (
-                date_entered, time_entered, communication, entered_by, assigned_to,
-                fba_customer, instructions_order_id, priority, due_date, status, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, tuple(row.values()))
+                date_entered,time_entered,communication,entered_by,assigned_to,
+                fba_customer,instructions_order_id,priority,due_date,status,notes
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            tuple(row.values()),
+        )
         con.commit()
         return cur.lastrowid
 
+
 def update_ticket(ticket_id: int, updates: dict):
+    if not updates:
+        return
     cols = [f"{k}=?" for k in updates.keys()]
     vals = list(updates.values()) + [ticket_id]
     with sqlite3.connect(DB_PATH) as con:
         con.execute(f"UPDATE tickets SET {', '.join(cols)} WHERE id=?", vals)
         con.commit()
 
-def delete_ticket(ticket_id: int):
+
+def delete_tickets(ids):
+    if not ids:
+        return
     with sqlite3.connect(DB_PATH) as con:
-        con.execute("DELETE FROM tickets WHERE id=?", (ticket_id,))
+        cur = con.cursor()
+        for ticket_id in ids:
+            cur.execute("INSERT INTO deleted_tickets SELECT * FROM tickets WHERE id=?", (int(ticket_id),))
+            cur.execute("DELETE FROM tickets WHERE id=?", (int(ticket_id),))
         con.commit()
 
-def load_tickets(where_clause="", params=()):
+
+def recover_tickets(ids):
+    if not ids:
+        return
     with sqlite3.connect(DB_PATH) as con:
-        df = pd.read_sql_query(
-            f"SELECT * FROM tickets {where_clause} ORDER BY id DESC", con, params=params
-        )
-    # Backward compatibility: old DB with attention_owner
-    if "attention_owner" in df.columns and "assigned_to" not in df.columns:
-        df.rename(columns={"attention_owner": "assigned_to"}, inplace=True)
-    return df
+        cur = con.cursor()
+        for ticket_id in ids:
+            cur.execute("INSERT INTO tickets SELECT * FROM deleted_tickets WHERE id=?", (int(ticket_id),))
+            cur.execute("DELETE FROM deleted_tickets WHERE id=?", (int(ticket_id),))
+        con.commit()
+
+
+def load_tickets(table: str = "tickets") -> pd.DataFrame:
+    with sqlite3.connect(DB_PATH) as con:
+        return pd.read_sql_query(f"SELECT * FROM {table} ORDER BY id DESC", con)
+
 
 # ---------------- Helpers ----------------
-def color_badge(text: str, color_map: dict) -> str:
-    color = color_map.get(text, "#444")
-    return f"""
-    <span style="
-        background:{color};
-        color:#fff;
-        padding:4px 12px;
-        border-radius:20px;
-        font-size:13px;
-        font-weight:600;
-        display:inline-block;
-        min-width:80px;
-        text-align:center;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-    ">{text}</span>
-    """
+def color_badge(text: str, color_map: dict, dark_text: bool = False) -> str:
+    color = color_map.get(text, "#ddd")
+    fg = "#000" if dark_text else "#fff"
+    return (
+        f"<span style='background:{color};color:{fg};padding:4px 10px;border-radius:20px;"
+        f"font-size:13px;font-weight:600;'>{_esc(text)}</span>"
+    )
 
-def render_table(df: pd.DataFrame):
-    if df.empty:
-        st.info("No tickets yet.")
+
+def calculate_due_date(priority: str) -> str:
+    today = dt.datetime.now(eastern)
+    if priority in ("Today", "Today 2"):
+        return today.strftime("%m/%d/%Y")
+    if priority == "Tomorrow":
+        return (today + dt.timedelta(days=1)).strftime("%m/%d/%Y")
+    if priority == "2 days":
+        return (today + dt.timedelta(days=2)).strftime("%m/%d/%Y")
+    return today.strftime("%m/%d/%Y")
+
+
+# ---------------- Table Renderer (+ filters, bulk actions, modal notes) ----------------
+def render_table(df: pd.DataFrame, deleted: bool = False):
+    # --- Filters ---
+    with st.expander("🔍 Filter", expanded=False):
+        fc1, fc2, fc3, fc4 = st.columns([1, 1, 1, 2])
+        with fc1:
+            assignee = st.selectbox("Assigned To", ["All"] + USERS, key=f"assignee_{'del' if deleted else 'act'}")
+        with fc2:
+            status_val = st.selectbox("Status", ["All"] + STATUS, key=f"status_{'del' if deleted else 'act'}")
+        with fc3:
+            priority_val = st.selectbox("Priority", ["All"] + PRIORITY, key=f"priority_{'del' if deleted else 'act'}")
+        with fc4:
+            query = st.text_input("Search (customer, order id, note, etc.)", key=f"q_{'del' if deleted else 'act'}").strip()
+
+    filtered = df.copy()
+    if assignee != "All":
+        filtered = filtered[filtered["assigned_to"] == assignee]
+    if status_val != "All":
+        filtered = filtered[filtered["status"] == status_val]
+    if priority_val != "All":
+        filtered = filtered[filtered["priority"] == priority_val]
+    if query:
+        q = query.lower()
+        mask = filtered.apply(lambda row: any(q in str(val).lower() for val in row.values), axis=1)
+        filtered = filtered[mask]
+
+    # --- Bulk actions (multiselect) ---
+    st.write("**Bulk actions**")
+    table_tag = "deleted" if deleted else "active"
+
+    option_labels = [f"#{r['id']} • {r['fba_customer']} • {r['status']}" for _, r in filtered.iterrows()]
+    label_to_id = {f"#{r['id']} • {r['fba_customer']} • {r['status']}": int(r["id"]) for _, r in filtered.iterrows()}
+
+    sleft, sright = st.columns([3, 2])
+    multi_key = f"bulk_{table_tag}_opts"
+
+    with sleft:
+        st.multiselect("Select tickets:", option_labels, key=multi_key)
+    with sright:
+        ca, cb, cc = st.columns([1, 1, 2])
+        if not deleted:
+            if cc.button("🗑️ Delete selected", type="primary", key=f"delbtn_{table_tag}"):
+                ids = [label_to_id[l] for l in st.session_state.get(multi_key, [])]
+                if ids:
+                    delete_tickets(ids)
+                    st.success(f"Deleted {len(ids)} ticket(s).")
+                    st.rerun()
+                else:
+                    st.warning("No tickets selected for deletion.")
+        else:
+            if cc.button("♻️ Recover selected", type="primary", key=f"recbtn_{table_tag}"):
+                ids = [label_to_id[l] for l in st.session_state.get(multi_key, [])]
+                if ids:
+                    recover_tickets(ids)
+                    st.success(f"Recovered {len(ids)} ticket(s).")
+                    st.rerun()
+                else:
+                    st.warning("No tickets selected for recovery.")
+
+    st.divider()
+
+    if filtered.empty:
+        st.info("No records match your filters.")
         return
 
-    rows = []
-    for _, r in df.iterrows():
-        priority = color_badge(r["priority"], PRIORITY_COLORS)
-        status = color_badge(r["status"], STATUS_COLORS)
-        rows.append(f"""
-            <tr>
-                <td>{r['id']}</td>
-                <td>{r['date_entered']}</td>
-                <td>{r['time_entered']}</td>
-                <td>{r['communication']}</td>
-                <td>{r['entered_by']}</td>
-                <td>{r['assigned_to']}</td>
-                <td>{r['fba_customer']}</td>
-                <td>{r['instructions_order_id']}</td>
-                <td>{priority}</td>
-                <td>{r['due_date']}</td>
-                <td>{status}</td>
-                <td>{r['notes']}</td>
-            </tr>
-        """)
+    def esc(x):
+        return _esc(str(x or ""))
+
+    rows_html = ""
+    for _, r in filtered.iterrows():
+        pr_badge = color_badge(r["priority"], PRIORITY_COLORS, dark_text=True)
+        st_badge = color_badge(r["status"], STATUS_COLORS)
+        note_text = str(r.get("notes", "") or "")
+        safe_note = note_text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+        note_btn = f"<button type='button' onclick=\"openNote('{safe_note}')\">📝 View</button>" if note_text else "📝 No Note"
+        rows_html += f"""
+        <tr>
+            <td>{esc(r['id'])}</td>
+            <td>{esc(r['date_entered'])}</td>
+            <td>{esc(r['time_entered'])}</td>
+            <td>{esc(r['communication'])}</td>
+            <td>{esc(r['entered_by'])}</td>
+            <td>{esc(r['assigned_to'])}</td>
+            <td>{esc(r['fba_customer'])}</td>
+            <td>{esc(r['instructions_order_id'])}</td>
+            <td>{pr_badge}</td>
+            <td>{esc(r['due_date'])}</td>
+            <td>{st_badge}</td>
+            <td>{note_btn}</td>
+        </tr>
+        """
 
     html = f"""
     <style>
-    table {{
-        width: 100%;
-        border-collapse: collapse;
-        font-family: 'Segoe UI', Tahoma, sans-serif;
-        font-size: 14px;
-    }}
-    th, td {{
-        border: 1px solid #ddd;
-        padding: 10px;
-        text-align: center;
-        vertical-align: middle;
-    }}
-    th {{
-        background-color: #f8f9fa;
-        font-weight: bold;
-        color: #333;
-        position: sticky;
-        top: 0;
-        z-index: 2;
-    }}
-    tr:nth-child(even) {{ background-color: #f9f9f9; }}
-    tr:hover {{ background-color: #eef6ff; }}
-    td:nth-child(8) {{ min-width: 250px; white-space: normal; }}
-    td:nth-child(12) {{ white-space: normal; }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 6px; }}
+    th, td {{ border: 1px solid #e6e6e6; padding: 8px; text-align: center; }}
+    th {{ background: #f8f9fa; font-weight: 700; }}
+    tr:nth-child(even) {{ background: #fafafa; }}
+    tr:hover {{ background: #eef6ff; }}
+    button {{ padding: 4px 10px; border-radius: 6px; cursor: pointer; border: none; background: #007bff; color: #fff; font-size: 12px; }}
+    button:hover {{ opacity: .9; }}
+
+    .modal {{ display:none; position:fixed; z-index:1000; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,.55); }}
+    .modal-content {{ background:#fff; margin:8% auto; padding:18px; border-radius:10px; width:60%; max-width:640px; position:relative; box-shadow:0 8px 24px rgba(0,0,0,.25); }}
+    .close {{ position:absolute; right:12px; top:8px; font-size:26px; color:#666; cursor:pointer; }}
+    #noteText {{ white-space:pre-wrap; text-align:left; padding:10px; background:#f8f9fa; border-radius:6px; max-height:340px; overflow:auto; }}
     </style>
 
     <table>
-        <thead>
-            <tr>
-                <th>ID</th>
-                <th>Date Entered</th>
-                <th>Time Entered</th>
-                <th>Communication</th>
-                <th>Entered By</th>
-                <th>Assigned To</th>
-                <th>FBA Customer</th>
-                <th>Instructions/Order ID</th>
-                <th>Priority</th>
-                <th>Due Date</th>
-                <th>Status</th>
-                <th>Notes</th>
-            </tr>
-        </thead>
-        <tbody>
-            {''.join(rows)}
-        </tbody>
+      <thead>
+        <tr>
+          <th>ID</th><th>Date</th><th>Time</th><th>Comm</th><th>Entered By</th><th>Assigned</th>
+          <th>Customer</th><th>Order ID</th><th>Priority</th><th>Due</th><th>Status</th><th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows_html}
+      </tbody>
     </table>
+
+    <div id=\"noteModal\" class=\"modal\">
+      <div class=\"modal-content\">
+        <span class=\"close\" onclick=\"closeModal()\">&times;</span>
+        <h3>📝 Ticket Note</h3>
+        <div id=\"noteText\"></div>
+        <div style=\"text-align:right; margin-top:10px;\"><button onclick=\"closeModal()\" style=\"background:#6c757d\">Close</button></div>
+      </div>
+    </div>
+
+    <script>
+    function openNote(t) {{
+      if (!t || t.trim() === '') {{ alert('No note available for this ticket.'); return; }}
+      document.getElementById('noteText').innerText = t;
+      document.getElementById('noteModal').style.display = 'block';
+    }}
+    function closeModal() {{ document.getElementById('noteModal').style.display = 'none'; }}
+    window.onclick = function(e) {{ const m = document.getElementById('noteModal'); if (e.target === m) closeModal(); }}
+    document.addEventListener('keydown', function(e) {{ if (e.key === 'Escape') closeModal(); }});
+    </script>
     """
 
-    st.components.v1.html(html, height=600, scrolling=True)
+    st.components.v1.html(html, height=560, scrolling=True)
+
 
 # ---------------- Pages ----------------
 def dashboard():
     st.subheader("📊 Dashboard")
-    df = load_tickets()
-    render_table(df)
+    df = load_tickets("tickets")
+    render_table(df, deleted=False)
 
-def add_or_edit():
-    st.subheader("📝 Add / Edit Tickets")
-    mode = st.radio("Mode", ["Add New", "Edit Existing"], horizontal=True)
 
-    if mode == "Edit Existing":
-        df_all = load_tickets()
-        ids = df_all["id"].tolist()
-        if not ids:
-            st.info("No tickets to edit. Switch to 'Add New'.")
-            return
-        sel_id = st.selectbox("Select Ticket ID", ids)
-        row = df_all[df_all["id"] == sel_id].iloc[0].to_dict()
-    else:
-        sel_id = None
-        now = dt.datetime.now(eastern)
-        row = {
-            "date_entered": now.strftime("%m/%d/%Y"),
-            "time_entered": now.strftime("%I:%M %p"),
-            "communication": COMMUNICATION[0],
-            "entered_by": USERS[0],
-            "assigned_to": USERS[0],
-            "fba_customer": "",
-            "instructions_order_id": "",
-            "priority": PRIORITY[0],
-            "due_date": now.strftime("%m/%d/%Y"),
-            "status": STATUS[0],
-            "notes": "",
-        }
+def add_new():
+    st.subheader("➕ Add Ticket")
+    now = dt.datetime.now(eastern)
+    with st.form("new_ticket"):
+        comm = st.selectbox("Communication", COMMUNICATION)
+        ent = st.selectbox("Entered By", USERS)
+        own = st.selectbox("Assigned To", USERS)
+        pr = st.selectbox("Priority", PRIORITY)
+        due_date = calculate_due_date(pr)
+        stt = st.selectbox("Status", STATUS)
+        cust = st.text_input("FBA Customer")
+        instr = st.text_area("Instructions / Order ID")
+        notes = st.text_area("Notes")
 
-    with st.form("ticket_form", clear_on_submit=False):
-        c1, c2, c3 = st.columns([1,1,1])
-        with c1: st.text_input("Date Entered", value=row["date_entered"], disabled=True)
-        with c2: st.text_input("Time Entered", value=row["time_entered"], disabled=True)
-        with c3: due = st.date_input("Due Date", value=dt.datetime.strptime(row["due_date"], "%m/%d/%Y").date())
+        submitted = st.form_submit_button("Add")
+        if submitted:
+            payload = dict(
+                date_entered=now.strftime("%m/%d/%Y"),
+                time_entered=now.strftime("%I:%M %p"),
+                communication=comm,
+                entered_by=ent,
+                assigned_to=own,
+                fba_customer=cust,
+                instructions_order_id=instr,
+                priority=pr,
+                due_date=due_date,
+                status=stt,
+                notes=notes,
+            )
+            insert_ticket(payload)
+            st.success("✅ Ticket added.")
+            st.rerun()
 
-        c4, c5, c6 = st.columns([1,1,1])
-        with c4: comm = st.selectbox("Communication", COMMUNICATION, index=COMMUNICATION.index(row["communication"]) if row["communication"] in COMMUNICATION else 0)
-        with c5: ent = st.selectbox("Entered By", USERS, index=USERS.index(row["entered_by"]) if row["entered_by"] in USERS else 0)
-        with c6: own = st.selectbox("Assigned To", USERS, index=USERS.index(row["assigned_to"]) if row["assigned_to"] in USERS else 0)
 
-        c7, c8 = st.columns([1,1])
-        with c7: pr = st.selectbox("Priority", PRIORITY, index=PRIORITY.index(row["priority"]) if row["priority"] in PRIORITY else 0)
-        with c8: stt = st.selectbox("Status", STATUS, index=STATUS.index(row["status"]) if row["status"] in STATUS else 0)
+def edit_existing():
+    st.subheader("✏️ Edit Ticket")
+    df = load_tickets("tickets")
+    if df.empty:
+        st.info("No tickets to edit.")
+        return
 
-        # Auto-set due_date
-        if pr == "Today": due = date.today()
-        elif pr == "Today 2": due = date.today()
-        elif pr == "Tomorrow": due = date.today() + dt.timedelta(days=1)
-        elif pr == "2 days": due = date.today() + dt.timedelta(days=2)
+    ids = df["id"].tolist()
+    sel_id = st.selectbox("Select Ticket ID", ids)
+    row = df[df["id"] == sel_id].iloc[0].to_dict()
 
+    with st.form("edit_ticket"):
+        comm = st.selectbox("Communication", COMMUNICATION, index=COMMUNICATION.index(row["communication"]))
+        ent = st.selectbox("Entered By", USERS, index=USERS.index(row["entered_by"]))
+        own = st.selectbox("Assigned To", USERS, index=USERS.index(row["assigned_to"]))
+        pr = st.selectbox("Priority", PRIORITY, index=PRIORITY.index(row["priority"]))
+        due_date = calculate_due_date(pr)
+        stt = st.selectbox("Status", STATUS, index=STATUS.index(row["status"]))
         cust = st.text_input("FBA Customer", value=row["fba_customer"])
-        instr = st.text_area("Instructions / Order ID", value=row["instructions_order_id"], height=80)
-        notes = st.text_area("Notes", value=row["notes"], height=200)
+        instr = st.text_area("Instructions / Order ID", value=row["instructions_order_id"]) 
+        notes = st.text_area("Notes", value=row["notes"]) 
 
-        if mode == "Add New":
-            submitted = st.form_submit_button("➕ Add Ticket", use_container_width=True)
-            if submitted:
-                now = dt.datetime.now(eastern)
-                payload = dict(
-                    date_entered=now.strftime("%m/%d/%Y"),
-                    time_entered=now.strftime("%I:%M %p"),
+        save = st.form_submit_button("Save")
+        if save:
+            update_ticket(
+                sel_id,
+                dict(
                     communication=comm,
                     entered_by=ent,
                     assigned_to=own,
                     fba_customer=cust,
                     instructions_order_id=instr,
                     priority=pr,
-                    due_date=due.strftime("%m/%d/%Y"),
+                    due_date=due_date,
                     status=stt,
-                    notes=notes
-                )
-                new_id = insert_ticket(payload)
-                st.success(f"✅ Ticket #{new_id} added.")
-                st.rerun()
-        else:
-            col_save, col_delete = st.columns([2,1])
-            with col_save: save_btn = st.form_submit_button("💾 Save Changes", use_container_width=True)
-            with col_delete: delete_btn = st.form_submit_button("🗑️ Delete", use_container_width=True)
+                    notes=notes,
+                ),
+            )
+            st.success(f"✅ Ticket #{sel_id} updated.")
+            st.rerun()
 
-            if save_btn:
-                updates = dict(
-                    communication=comm,
-                    entered_by=ent,
-                    assigned_to=own,
-                    fba_customer=cust,
-                    instructions_order_id=instr,
-                    priority=pr,
-                    due_date=due.strftime("%m/%d/%Y"),
-                    status=stt,
-                    notes=notes
-                )
-                update_ticket(sel_id, updates)
-                st.success(f"✅ Ticket #{sel_id} updated.")
-                st.rerun()
 
-            if delete_btn:
-                delete_ticket(sel_id)
-                st.success(f"🗑️ Ticket #{sel_id} deleted.")
-                st.rerun()
+def deleted_records():
+    st.subheader("🗑️ Deleted Records")
+    df = load_tickets("deleted_tickets")
+    render_table(df, deleted=True)
+
 
 # ---------------- Main ----------------
 def main():
     st.set_page_config(page_title="Tickets Tracker", layout="wide")
-    st.title("🎟️ Tickets Tracker (Access-style)")
+    st.title("🎟️ Tickets Tracker")
     init_db()
 
-    tab1, tab2 = st.tabs(["📊 Dashboard", "📝 Add / Edit"])
-    with tab1: dashboard()
-    with tab2: add_or_edit()
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Dashboard", "➕ Add New", "✏️ Edit Existing", "🗑️ Deleted Records"])
+    with tab1:
+        dashboard()
+    with tab2:
+        add_new()
+    with tab3:
+        edit_existing()
+    with tab4:
+        deleted_records()
+
 
 if __name__ == "__main__":
     main()
