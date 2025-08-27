@@ -139,7 +139,7 @@ def calculate_due_date(priority: str) -> str:
     return today.strftime("%m/%d/%Y")
 
 
-# ---------------- Table Renderer (+ filters, bulk actions, modal notes) ----------------
+# ---------------- Table Renderer (HTML table + modal note) ----------------
 def render_table(df: pd.DataFrame, deleted: bool = False):
     # --- Filters ---
     with st.expander("🔍 Filter", expanded=False):
@@ -178,7 +178,7 @@ def render_table(df: pd.DataFrame, deleted: bool = False):
     with sleft:
         st.multiselect("Select tickets:", option_labels, key=multi_key)
     with sright:
-        ca, cb, cc = st.columns([1, 1, 2])
+        _, _, cc = st.columns([1, 1, 2])
         if not deleted:
             if cc.button("🗑️ Delete selected", type="primary", key=f"delbtn_{table_tag}"):
                 ids = [label_to_id[l] for l in st.session_state.get(multi_key, [])]
@@ -219,7 +219,6 @@ def render_table(df: pd.DataFrame, deleted: bool = False):
             <td>{esc(r['id'])}</td>
             <td>{esc(r['date_entered'])}</td>
             <td>{esc(r['time_entered'])}</td>
-            <td>{esc(r['communication'])}</td>
             <td>{esc(r['entered_by'])}</td>
             <td>{esc(r['assigned_to'])}</td>
             <td>{esc(r['fba_customer'])}</td>
@@ -228,6 +227,7 @@ def render_table(df: pd.DataFrame, deleted: bool = False):
             <td>{esc(r['due_date'])}</td>
             <td>{st_badge}</td>
             <td>{note_btn}</td>
+            <td>{esc(r['communication'])}</td>
         </tr>
         """
 
@@ -250,8 +250,8 @@ def render_table(df: pd.DataFrame, deleted: bool = False):
     <table>
       <thead>
         <tr>
-          <th>ID</th><th>Date</th><th>Time</th><th>Comm</th><th>Entered By</th><th>Assigned</th>
-          <th>Customer</th><th>Order ID</th><th>Priority</th><th>Due</th><th>Status</th><th>Notes</th>
+          <th>ID</th><th>Date</th><th>Time</th><th>Entered By</th><th>Assigned</th>
+          <th>Customer</th><th>Order ID</th><th>Priority</th><th>Due</th><th>Status</th><th>Notes</th><th>Comm</th>
         </tr>
       </thead>
       <tbody>
@@ -279,7 +279,7 @@ def render_table(df: pd.DataFrame, deleted: bool = False):
     document.addEventListener('keydown', function(e) {{ if (e.key === 'Escape') closeModal(); }});
     </script>
     """
-
+    
     st.components.v1.html(html, height=560, scrolling=True)
 
 
@@ -292,20 +292,24 @@ def dashboard():
 
 def add_new():
     st.subheader("➕ Add Ticket")
+    # show success message after rerun
+    if st.session_state.pop("flash_add_success", False):
+        st.success("✅ Ticket added.")
     now = dt.datetime.now(eastern)
     with st.form("new_ticket"):
-        comm = st.selectbox("Communication", COMMUNICATION)
-        ent = st.selectbox("Entered By", USERS)
-        own = st.selectbox("Assigned To", USERS)
-        pr = st.selectbox("Priority", PRIORITY)
-        due_date = calculate_due_date(pr)
-        stt = st.selectbox("Status", STATUS)
-        cust = st.text_input("FBA Customer")
-        instr = st.text_area("Instructions / Order ID")
-        notes = st.text_area("Notes")
+        # All defaults blank
+        ent = st.selectbox("Entered By", [""] + USERS, index=0, key="add_ent")
+        own = st.selectbox("Assigned To", [""] + USERS, index=0, key="add_own")
+        pr = st.selectbox("Priority", [""] + PRIORITY, index=0, key="add_pr")
+        cust = st.text_input("FBA Customer", value="", key="add_cust")
+        stt = st.selectbox("Status", [""] + STATUS, index=0, key="add_status")
+        instr = st.text_area("Instructions / Order ID", value="", key="add_instr")
+        notes = st.text_area("Notes", value="", key="add_notes")
+        comm = st.selectbox("Comm", [""] + COMMUNICATION, index=0, key="add_comm")
 
         submitted = st.form_submit_button("Add")
         if submitted:
+            due_date = calculate_due_date(pr) if pr else ""
             payload = dict(
                 date_entered=now.strftime("%m/%d/%Y"),
                 time_entered=now.strftime("%I:%M %p"),
@@ -320,10 +324,13 @@ def add_new():
                 notes=notes,
             )
             insert_ticket(payload)
-            st.success("✅ Ticket added.")
+            # Clear fields so the form is blank again
+            for k in ["add_ent","add_own","add_pr","add_cust","add_status","add_instr","add_notes","add_comm"]:
+                if k in st.session_state:
+                    del st.session_state[k]
+            # set flash flag so success shows after rerun
+            st.session_state["flash_add_success"] = True
             st.rerun()
-
-
 def edit_existing():
     st.subheader("✏️ Edit Ticket")
     df = load_tickets("tickets")
@@ -336,15 +343,15 @@ def edit_existing():
     row = df[df["id"] == sel_id].iloc[0].to_dict()
 
     with st.form("edit_ticket"):
-        comm = st.selectbox("Communication", COMMUNICATION, index=COMMUNICATION.index(row["communication"]))
-        ent = st.selectbox("Entered By", USERS, index=USERS.index(row["entered_by"]))
-        own = st.selectbox("Assigned To", USERS, index=USERS.index(row["assigned_to"]))
-        pr = st.selectbox("Priority", PRIORITY, index=PRIORITY.index(row["priority"]))
-        due_date = calculate_due_date(pr)
-        stt = st.selectbox("Status", STATUS, index=STATUS.index(row["status"]))
-        cust = st.text_input("FBA Customer", value=row["fba_customer"])
-        instr = st.text_area("Instructions / Order ID", value=row["instructions_order_id"]) 
-        notes = st.text_area("Notes", value=row["notes"]) 
+        # Same order as Add; Comm last
+        ent = st.selectbox("Entered By", USERS, index=USERS.index(row.get("entered_by","Sam")))
+        own = st.selectbox("Assigned To", USERS, index=USERS.index(row.get("assigned_to","Sam")))
+        pr = st.selectbox("Priority", PRIORITY, index=PRIORITY.index(row.get("priority","Today")))
+        cust = st.text_input("FBA Customer", value=row.get("fba_customer",""))
+        stt = st.selectbox("Status", STATUS, index=STATUS.index(row.get("status","Open")))
+        instr = st.text_area("Instructions / Order ID", value=row.get("instructions_order_id",""))
+        notes = st.text_area("Notes", value=row.get("notes",""))
+        comm = st.selectbox("Comm", COMMUNICATION, index=COMMUNICATION.index(row.get("communication", COMMUNICATION[0])))
 
         save = st.form_submit_button("Save")
         if save:
@@ -357,7 +364,7 @@ def edit_existing():
                     fba_customer=cust,
                     instructions_order_id=instr,
                     priority=pr,
-                    due_date=due_date,
+                    due_date=calculate_due_date(pr),
                     status=stt,
                     notes=notes,
                 ),
@@ -375,6 +382,21 @@ def deleted_records():
 # ---------------- Main ----------------
 def main():
     st.set_page_config(page_title="Tickets Tracker", layout="wide")
+    st.markdown(
+        """
+        <style>
+        [data-testid="stAppViewContainer"] .block-container {
+            padding: 1rem !important;
+            max-width: 100% !important;
+        }
+        .stTabs [data-baseweb="tab-list"] { gap: .25rem; }
+        .stTabs [data-baseweb="tab"] { padding: 6px 10px; }
+        h1, h2, h3 { margin-top: .25rem; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     st.title("🎟️ Tickets Tracker")
     init_db()
 
