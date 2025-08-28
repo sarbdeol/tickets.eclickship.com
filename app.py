@@ -342,16 +342,27 @@ def edit_existing():
     sel_id = st.selectbox("Select Ticket ID", ids)
     row = df[df["id"] == sel_id].iloc[0].to_dict()
 
+    # helper: safe index into option lists
+    def _idx(opts, val):
+        v = "" if val is None else str(val)
+        return opts.index(v) if v in opts else 0
+
     with st.form("edit_ticket"):
-        # Same order as Add; Comm last
-        ent = st.selectbox("Entered By", USERS, index=USERS.index(row.get("entered_by","Sam")))
-        own = st.selectbox("Assigned To", USERS, index=USERS.index(row.get("assigned_to","Sam")))
-        pr = st.selectbox("Priority", PRIORITY, index=PRIORITY.index(row.get("priority","Today")))
-        cust = st.text_input("FBA Customer", value=row.get("fba_customer",""))
-        stt = st.selectbox("Status", STATUS, index=STATUS.index(row.get("status","Open")))
-        instr = st.text_area("Instructions / Order ID", value=row.get("instructions_order_id",""))
-        notes = st.text_area("Notes", value=row.get("notes",""))
-        comm = st.selectbox("Comm", COMMUNICATION, index=COMMUNICATION.index(row.get("communication", COMMUNICATION[0])))
+        # include blank first so legacy/empty values work
+        ent_opts  = [""] + USERS
+        own_opts  = [""] + USERS
+        pr_opts   = [""] + PRIORITY
+        stt_opts  = [""] + STATUS
+        comm_opts = [""] + COMMUNICATION
+
+        ent   = st.selectbox("Entered By", ent_opts,  index=_idx(ent_opts,  row.get("entered_by")))
+        own   = st.selectbox("Assigned To", own_opts,  index=_idx(own_opts,  row.get("assigned_to")))
+        pr    = st.selectbox("Priority",    pr_opts,   index=_idx(pr_opts,   row.get("priority")))
+        cust  = st.text_input("FBA Customer", value=row.get("fba_customer", "") or "")
+        stt   = st.selectbox("Status",      stt_opts, index=_idx(stt_opts,  row.get("status")))
+        instr = st.text_area("Instructions / Order ID", value=row.get("instructions_order_id", "") or "")
+        notes = st.text_area("Notes", value=row.get("notes", "") or "")
+        comm  = st.selectbox("Comm",        comm_opts, index=_idx(comm_opts, row.get("communication")))
 
         save = st.form_submit_button("Save")
         if save:
@@ -364,7 +375,7 @@ def edit_existing():
                     fba_customer=cust,
                     instructions_order_id=instr,
                     priority=pr,
-                    due_date=calculate_due_date(pr),
+                    due_date=calculate_due_date(pr) if pr else "",
                     status=stt,
                     notes=notes,
                 ),
