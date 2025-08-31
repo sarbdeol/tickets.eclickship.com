@@ -392,7 +392,7 @@ def deleted_records():
 
 # ---------------- Main ----------------
 def main():
-    st.set_page_config(page_title="Tickets Tracker", layout="wide")
+    st.set_page_config(page_title="customer Order Tracker", layout="wide")
     st.markdown(
         """
         <style>
@@ -408,7 +408,7 @@ def main():
         unsafe_allow_html=True,
     )
 
-    st.title("🎟️ Tickets Tracker")
+    st.title("🎟️ customer Order Tracker")
     init_db()
 
     tab1, tab2, tab3, tab4 = st.tabs(["📊 Dashboard", "➕ Add New", "✏️ Edit Existing", "🗑️ Deleted Records"])
