@@ -166,8 +166,8 @@ def render_table(df: pd.DataFrame, deleted: bool = False):
     st.write("**Bulk actions**")
     table_tag = "deleted" if deleted else "active"
 
-    option_labels = [f"#{r['id']} • {r['fba_customer']} • {r['status']}" for _, r in filtered.iterrows()]
-    label_to_id = {f"#{r['id']} • {r['fba_customer']} • {r['status']}": int(r["id"]) for _, r in filtered.iterrows()}
+    option_labels = [f"#{r['id']} • {r['status']}" for _, r in filtered.iterrows()]
+    label_to_id = {f"#{r['id']} • {r['status']}": int(r["id"]) for _, r in filtered.iterrows()}
 
     sleft, sright = st.columns([3, 2])
     multi_key = f"bulk_{table_tag}_opts"
